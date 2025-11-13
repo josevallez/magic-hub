@@ -1,3 +1,5 @@
 header { background: #eaf4ff; }
 h1 { letter-spacing: 0.5px; }
 article { border-left: 4px solid #cde3ff; padding-left: 1rem; }
+article > p { color: #333; font-size: 1rem; }
+article ~ p { color: #666; font-style: italic; margin-top: 2rem; }
