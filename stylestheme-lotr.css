@@ -1,0 +1,120 @@
+import MetaTrader5 as mt5
+import time
+from datetime import datetime
+import os
+from pathlib import Path
+
+# --- Configuración ---
+SIMBOLO = "EURGBP"
+# 5 pips para EURGBP (pares con 4 decimales)
+UMBRAL_MOVIMIENTO_PIPS = 0.0005 
+INTERVALO_POLLING = 0.5 
+
+# --- Ruta del Archivo de Registro ---
+# Intenta determinar la ruta del Escritorio
+try:
+    # Esto funciona para Windows, macOS y Linux si la variable de entorno está configurada
+    ruta_escritorio = Path.home() / "Desktop" 
+    # Nombre del archivo de registro
+    RUTA_ARCHIVO_LOG = ruta_escritorio / "registro_eurgbp.txt"
+except Exception:
+    # Si falla la detección, usa la ruta donde se ejecuta el script
+    RUTA_ARCHIVO_LOG = Path("registro_eurgbp.txt")
+    print("⚠️ ADVERTENCIA: No se pudo determinar la ruta del Escritorio. El archivo se guardará en la carpeta actual.")
+
+# Función para registrar la alerta en la terminal y en el archivo
+def registrar_alerta(mensaje_terminal, mensaje_log):
+    # Imprimir en la terminal
+    print(mensaje_terminal)
+    
+    # Escribir en el archivo de log (modo 'a' para añadir al final)
+    try:
+        with open(RUTA_ARCHIVO_LOG, 'a') as f:
+            f.write(mensaje_log + "\n")
+    except Exception as e:
+        print(f"❌ ERROR al escribir en el archivo de log: {e}")
+
+def trakeo_ticks_con_alerta():
+    if not mt5.initialize():
+        print(f"❌ Fallo al inicializar MT5. Error: {mt5.last_error()}")
+        return
+
+    print(f"✅ Conexión a MT5 inicializada para {SIMBOLO}.")
+    print(f"📝 El registro de alertas se guardará en: {RUTA_ARCHIVO_LOG}")
+
+    mt5.symbol_select(SIMBOLO, True)
+    print("⌛ Esperando obtener el precio de referencia inicial...")
+    
+    # Obtener precio de referencia inicial (Bid)
+    tick_inicial = None
+    while tick_inicial is None or tick_inicial.time == 0:
+        time.sleep(1)
+        tick_inicial = mt5.symbol_info_tick(SIMBOLO)
+    
+    precio_referencia = tick_inicial.bid 
+    ultimo_tick_time = tick_inicial.time
+    
+    print(f"✅ Precio de referencia inicial (Bid): {precio_referencia:.5f}")
+    
+    # Bucle principal de trakeo
+    try:
+        while True:
+            tick_actual = mt5.symbol_info_tick(SIMBOLO)
+            
+            if tick_actual is not None and tick_actual.time > ultimo_tick_time:
+                
+                bid_actual = tick_actual.bid
+                hora_tick = datetime.fromtimestamp(tick_actual.time)
+                hora_formateada = hora_tick.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # --- Lógica de Alerta de 5 Pips ---
+                diferencia = bid_actual - precio_referencia
+                
+                if diferencia >= UMBRAL_MOVIMIENTO_PIPS:
+                    # SUBIDA
+                    simbolo = "⬆️" # Símbolo de subida para la terminal
+                    alerta_terminal = f"🟢 {simbolo} ¡ALERTA! {SIMBOLO} ha SUBIDO 5 pips. Nuevo Bid: {bid_actual:.5f}"
+                    alerta_log = f"{hora_formateada} | ^ | Subida de 5 pips. Nuevo Bid: {bid_actual:.5f} | Ref: {precio_referencia:.5f}"
+                    
+                    registrar_alerta(alerta_terminal, alerta_log)
+                    precio_referencia = bid_actual
+                
+                elif diferencia <= -UMBRAL_MOVIMIENTO_PIPS:
+                    # BAJADA
+                    simbolo = "⬇️" # Símbolo de bajada para la terminal
+                    alerta_terminal = f"🔴 {simbolo} ¡ALERTA! {SIMBOLO} ha BAJADO 5 pips. Nuevo Bid: {bid_actual:.5f}"
+                    alerta_log = f"{hora_formateada} | v | Bajada de 5 pips. Nuevo Bid: {bid_actual:.5f} | Ref: {precio_referencia:.5f}"
+                    
+                    registrar_alerta(alerta_terminal, alerta_log)
+                    precio_referencia = bid_actual
+
+                # Imprimir el tick en la terminal (opcional, para mantener el seguimiento)
+                # print(f"[{hora_formateada}] Bid: {bid_actual:.5f} | Ask: {tick_actual.ask:.5f}")
+                
+                ultimo_tick_time = tick_actual.time
+            
+            time.sleep(INTERVALO_POLLING)
+
+    except KeyboardInterrupt:
+        print("\n🛑 Trakeo de ticks detenido por el usuario.")
+    
+    finally:
+        mt5.symbol_select(SIMBOLO, False)
+        mt5.shutdown()
+        print("🔌 Conexión a MT5 cerrada.")
+
+if __name__ == "__main__":
+    # Verifica si el archivo existe antes de empezar y, si no, lo crea o lo trunca
+    try:
+        if not RUTA_ARCHIVO_LOG.parent.exists():
+             print("❌ La carpeta de destino (Escritorio) no existe.")
+        else:
+            with open(RUTA_ARCHIVO_LOG, 'a') as f:
+                f.write("\n--- INICIO DE SEGUIMIENTO ---\n")
+                f.write(f"Símbolo: {SIMBOLO}, Umbral: {UMBRAL_MOVIMIENTO_PIPS} (5 Pips)\n")
+                f.write(f"Hora de Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("----------------------------\n")
+            trakeo_ticks_con_alerta()
+
+    except Exception as e:
+        print(f"Error fatal en la preparación o ejecución: {e}")
